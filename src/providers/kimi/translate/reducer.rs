@@ -157,11 +157,9 @@ struct StreamError {
     r#type: Option<String>,
 }
 
-#[allow(dead_code)]
 struct ToolSlot {
+    upstream_index: usize,
     block_index: usize,
-    id: String,
-    name: String,
 }
 
 pub fn reduce_upstream_bytes(input: &[u8]) -> Result<Vec<ReducerEvent>, UpstreamStreamError> {
@@ -270,7 +268,9 @@ pub fn reduce_upstream_bytes(input: &[u8]) -> Result<Vec<ReducerEvent>, Upstream
             }
 
             for tc in tool_calls {
-                let existing_pos = tool_slots.iter().position(|s| s.block_index == tc.index);
+                let existing_pos = tool_slots
+                    .iter()
+                    .position(|slot| slot.upstream_index == tc.index);
                 let block_index = if let Some(pos) = existing_pos {
                     tool_slots[pos].block_index
                 } else {
@@ -288,9 +288,8 @@ pub fn reduce_upstream_bytes(input: &[u8]) -> Result<Vec<ReducerEvent>, Upstream
                     let bi = next_block_index;
                     next_block_index += 1;
                     tool_slots.push(ToolSlot {
+                        upstream_index: tc.index,
                         block_index: bi,
-                        id: id.clone(),
-                        name: name.clone(),
                     });
                     out.push(ReducerEvent::ToolStart {
                         index: bi,
@@ -400,7 +399,7 @@ mod tests {
         let upstream = concat!(
             "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"think\"}}]}\n\n",
             "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n",
-            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"search\",\"arguments\":\"{\\\"q\\\"\"}}]}}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"search\",\"arguments\":\"{\\\"q\\\"\"}}]}}]}\n\n",
             "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\":\\\"rust\\\"}\"}}]}}]}\n\n",
             "data: {\"choices\":[{\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":3,\"prompt_tokens_details\":{\"cached_tokens\":4}}}\n\n",
             "data: [DONE]\n\n"
@@ -418,6 +417,14 @@ mod tests {
                 ..
             }
         )));
+        let arguments = events
+            .iter()
+            .filter_map(|event| match event {
+                ReducerEvent::ToolDelta { partial_json, .. } => Some(partial_json.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+        assert_eq!(arguments, "{\"q\":\"rust\"}");
     }
 
     #[test]

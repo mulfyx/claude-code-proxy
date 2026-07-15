@@ -9,11 +9,11 @@ use crate::providers::translate_shared::{
 };
 
 // ---------------------------------------------------------------------------
-// Kimi OpenAI-compatible chat-completions types
+// Shared OpenAI-compatible chat-completions types
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KimiChatRequest {
+pub struct OpenAiChatRequest {
     pub model: String,
     pub messages: Vec<KimiMessage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -129,7 +129,7 @@ const DEFAULT_MAX_TOKENS: u32 = 32000;
 pub fn translate_request(
     req: &MessagesRequest,
     opts: TranslateOptions,
-) -> Result<KimiChatRequest, anyhow::Error> {
+) -> Result<OpenAiChatRequest, anyhow::Error> {
     let model = req.model.as_deref().unwrap_or(KIMI_DEFAULT_MODEL);
     let resolved = resolve_model(model);
     assert_allowed_model(&resolved).map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -138,7 +138,7 @@ pub fn translate_request(
     let tools = read_tools(req)?;
     let tool_choice = read_tool_choice(req)?;
 
-    let mut out = KimiChatRequest {
+    let mut out = OpenAiChatRequest {
         model: resolved,
         messages,
         stream: true,
@@ -161,6 +161,36 @@ pub fn translate_request(
     }
 
     Ok(out)
+}
+
+pub fn translate_openai_compatible_request(
+    req: &MessagesRequest,
+    model: String,
+) -> Result<OpenAiChatRequest, anyhow::Error> {
+    let messages = build_messages(req)?;
+    let tools = read_tools(req)?;
+    let mut tool_choice = read_tool_choice(req)?;
+    if matches!(tool_choice, Some(KimiToolChoice::Auto)) {
+        tool_choice = None;
+    }
+
+    Ok(OpenAiChatRequest {
+        model,
+        messages,
+        tools: if tools.is_empty() { None } else { Some(tools) },
+        tool_choice,
+        stream: true,
+        stream_options: KimiStreamOptions {
+            include_usage: true,
+        },
+        max_tokens: req
+            .max_tokens
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_MAX_TOKENS),
+        reasoning_effort: None,
+        thinking: None,
+        prompt_cache_key: None,
+    })
 }
 
 fn clamp_max_tokens(requested: Option<u32>) -> u32 {
@@ -516,6 +546,25 @@ mod tests {
         assert_eq!(translated.reasoning_effort.as_deref(), Some("high"));
         assert_eq!(translated.prompt_cache_key.as_deref(), Some("sid"));
         assert_eq!(translated.max_tokens, 10);
+    }
+
+    #[test]
+    fn generic_openai_translation_uses_exact_model_without_kimi_extensions() {
+        let req: MessagesRequest = serde_json::from_value(json!({
+            "model": "opencode-go/glm-5.2",
+            "max_tokens": 64000,
+            "messages": [{"role": "user", "content": "hello"}],
+            "output_config": {"effort":"xhigh"}
+        }))
+        .unwrap();
+
+        let translated = translate_openai_compatible_request(&req, "glm-5.2".to_string()).unwrap();
+        assert_eq!(translated.model, "glm-5.2");
+        assert_eq!(translated.max_tokens, 64000);
+        assert!(translated.stream);
+        assert!(translated.reasoning_effort.is_none());
+        assert!(translated.thinking.is_none());
+        assert!(translated.prompt_cache_key.is_none());
     }
 
     #[test]

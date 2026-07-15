@@ -4,7 +4,7 @@ use crate::providers::kimi::auth::constants::api_base_url;
 use crate::providers::kimi::auth::headers::common_headers;
 use crate::providers::kimi::auth::manager::KimiAuthManager;
 use crate::providers::kimi::auth::token_store::{StoredAuth, file_store};
-use crate::providers::kimi::translate::request::KimiChatRequest;
+use crate::providers::kimi::translate::request::OpenAiChatRequest;
 use crate::retry::{MAX_RATE_LIMIT_RETRIES, compute_backoff_delay};
 
 #[derive(Debug)]
@@ -47,7 +47,7 @@ impl KimiHttpClient {
         &self.auth_manager
     }
 
-    pub fn post_kimi(&self, body: &KimiChatRequest) -> Result<KimiResponse, KimiError> {
+    pub fn post_kimi(&self, body: &OpenAiChatRequest) -> Result<KimiResponse, KimiError> {
         let mut auth = self.auth_manager.get_auth().map_err(|e| KimiError {
             status: 401,
             message: "Auth error".to_string(),
@@ -96,7 +96,7 @@ impl KimiHttpClient {
     fn attempt_post(
         &self,
         access_token: &str,
-        body: &KimiChatRequest,
+        body: &OpenAiChatRequest,
     ) -> Result<KimiResponse, KimiError> {
         let headers = common_headers().map_err(|e| KimiError {
             status: 500,

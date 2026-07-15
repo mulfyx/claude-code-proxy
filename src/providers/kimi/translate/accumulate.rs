@@ -203,6 +203,27 @@ mod tests {
     }
 
     #[test]
+    fn accumulate_fragmented_tool_arguments_after_thinking() {
+        let upstream = concat!(
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"thinking\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"Read\",\"arguments\":\"\"}}]}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"file_path\\\":\"}}]}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"input.txt\\\"}\"}}]}}]}\n\n",
+            "data: {\"choices\":[{\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+        let response = accumulate_response(upstream.as_bytes(), "msg_1", "model").unwrap();
+        let tool = response["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|block| block["type"] == "tool_use")
+            .unwrap();
+        assert_eq!(tool["name"], "Read");
+        assert_eq!(tool["input"]["file_path"], "input.txt");
+    }
+
+    #[test]
     fn accumulate_handles_upstream_error() {
         let upstream = "data: {\"error\":{\"message\":\"upstream failure\"}}\n\n";
         let result = accumulate_response(upstream.as_bytes(), "msg_e", "model");

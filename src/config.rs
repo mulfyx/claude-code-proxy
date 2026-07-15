@@ -42,6 +42,7 @@ struct FileConfig {
     pub codex: Option<CodexConfig>,
     pub cursor: Option<CursorConfig>,
     pub grok: Option<GrokConfig>,
+    pub opencode: Option<OpenCodeConfig>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -91,6 +92,14 @@ struct GrokConfig {
     pub base_url: Option<String>,
     #[serde(rename = "clientVersion")]
     pub client_version: Option<String>,
+}
+
+#[derive(Deserialize, Clone)]
+struct OpenCodeConfig {
+    #[serde(rename = "apiKey")]
+    pub api_key: Option<String>,
+    #[serde(rename = "baseUrl")]
+    pub base_url: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -238,6 +247,14 @@ pub fn config_override_summary_lines(cfg: &LoadedConfig) -> Vec<String> {
     if env.contains_key("CCP_GROK_CLIENT_VERSION") {
         out.push("grok.clientVersion (env)".to_string());
     }
+    if env.contains_key("CCP_OPENCODE_API_KEY") {
+        out.push("opencode.apiKey (env)".to_string());
+    } else if env.contains_key("OPENCODE_API_KEY") {
+        out.push("opencode.apiKey (OpenCode env)".to_string());
+    }
+    if env.contains_key("CCP_OPENCODE_BASE_URL") {
+        out.push("opencode.baseUrl (env)".to_string());
+    }
     if env
         .get("CCP_CODEX_REASONING_SUMMARY")
         .is_some_and(|raw| !raw.is_empty())
@@ -260,6 +277,14 @@ pub fn config_override_summary_lines(cfg: &LoadedConfig) -> Vec<String> {
             }
             if let Some(v) = log.stderr {
                 out.push(format!("log.stderr: {v}"));
+            }
+        }
+        if let Some(opencode) = file_cfg.opencode {
+            if opencode.api_key.is_some_and(|raw| !raw.is_empty()) {
+                out.push("opencode.apiKey (config)".to_string());
+            }
+            if let Some(url) = opencode.base_url.filter(|raw| !raw.is_empty()) {
+                out.push(format!("opencode.baseUrl: {url}"));
             }
         }
         if let Some(codex) = file_cfg.codex
@@ -296,6 +321,65 @@ pub fn grok_client_version() -> String {
         return version;
     }
     "0.2.93".to_string()
+}
+
+pub fn opencode_api_key() -> Option<String> {
+    let env: HashMap<_, _> = std::env::vars().collect();
+    if let Some(raw) = env
+        .get("CCP_OPENCODE_API_KEY")
+        .filter(|raw| !raw.is_empty())
+    {
+        return Some(raw.clone());
+    }
+    if let Some(raw) = env.get("OPENCODE_API_KEY").filter(|raw| !raw.is_empty()) {
+        return Some(raw.clone());
+    }
+    read_file_config(&paths::config_dir())
+        .and_then(|file| file.opencode)
+        .and_then(|opencode| opencode.api_key)
+        .filter(|raw| !raw.is_empty())
+}
+
+pub fn opencode_api_key_source() -> Option<&'static str> {
+    let env: HashMap<_, _> = std::env::vars().collect();
+    if env
+        .get("CCP_OPENCODE_API_KEY")
+        .is_some_and(|raw| !raw.is_empty())
+    {
+        return Some("CCP_OPENCODE_API_KEY");
+    }
+    if env
+        .get("OPENCODE_API_KEY")
+        .is_some_and(|raw| !raw.is_empty())
+    {
+        return Some("OPENCODE_API_KEY");
+    }
+    if read_file_config(&paths::config_dir())
+        .and_then(|file| file.opencode)
+        .and_then(|opencode| opencode.api_key)
+        .is_some_and(|raw| !raw.is_empty())
+    {
+        return Some("config.json");
+    }
+    None
+}
+
+pub fn opencode_base_url() -> String {
+    let env: HashMap<_, _> = std::env::vars().collect();
+    if let Some(raw) = env
+        .get("CCP_OPENCODE_BASE_URL")
+        .filter(|raw| !raw.is_empty())
+    {
+        return raw.clone();
+    }
+    if let Some(url) = read_file_config(&paths::config_dir())
+        .and_then(|file| file.opencode)
+        .and_then(|opencode| opencode.base_url)
+        .filter(|raw| !raw.is_empty())
+    {
+        return url;
+    }
+    "https://opencode.ai/zen/go/v1".to_string()
 }
 
 pub fn is_verbose() -> bool {
@@ -592,7 +676,37 @@ mod tests {
             std::env::remove_var("CCP_LOG_VERBOSE");
             std::env::remove_var("CCP_LOG_STDERR");
             std::env::remove_var("CCP_CODEX_REASONING_SUMMARY");
+            std::env::remove_var("CCP_OPENCODE_API_KEY");
+            std::env::remove_var("OPENCODE_API_KEY");
+            std::env::remove_var("CCP_OPENCODE_BASE_URL");
         }
+    }
+
+    #[test]
+    fn opencode_config_reads_file_and_env_precedence() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        clear_env();
+        let config = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            config.path().join("config.json"),
+            r#"{"opencode":{"apiKey":"file-key","baseUrl":"https://file.example/v1"}}"#,
+        )
+        .unwrap();
+        let _config_env = EnvGuard::set("CCP_CONFIG_DIR", config.path());
+
+        assert_eq!(opencode_api_key().as_deref(), Some("file-key"));
+        assert_eq!(opencode_api_key_source(), Some("config.json"));
+        assert_eq!(opencode_base_url(), "https://file.example/v1");
+
+        let _standard_key = EnvGuard::set("OPENCODE_API_KEY", "standard-key");
+        assert_eq!(opencode_api_key().as_deref(), Some("standard-key"));
+        assert_eq!(opencode_api_key_source(), Some("OPENCODE_API_KEY"));
+
+        let _ccp_key = EnvGuard::set("CCP_OPENCODE_API_KEY", "ccp-key");
+        let _base_url = EnvGuard::set("CCP_OPENCODE_BASE_URL", "https://env.example/v1");
+        assert_eq!(opencode_api_key().as_deref(), Some("ccp-key"));
+        assert_eq!(opencode_api_key_source(), Some("CCP_OPENCODE_API_KEY"));
+        assert_eq!(opencode_base_url(), "https://env.example/v1");
     }
 
     #[test]

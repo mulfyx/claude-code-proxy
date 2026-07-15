@@ -73,6 +73,10 @@ impl Registry {
                 .map(|model| (*model).to_string())
                 .collect(),
         );
+        models.insert(
+            "opencode".into(),
+            crate::providers::opencode::advertised_models(),
+        );
 
         let mut handlers = BTreeMap::new();
         for (name, entries) in &models {
@@ -81,6 +85,7 @@ impl Registry {
                 "kimi" => Arc::new(crate::providers::kimi::KimiProvider::new()),
                 "cursor" => Arc::new(crate::providers::cursor::CursorProvider::new()),
                 "grok" => Arc::new(crate::providers::grok::GrokProvider::new()),
+                "opencode" => Arc::new(crate::providers::opencode::OpenCodeProvider::new()),
                 _ => Arc::new(PlaceholderProvider::new(name, entries.clone())),
             };
             handlers.insert(name.clone(), handler);
@@ -206,6 +211,7 @@ impl PlaceholderProvider {
             "kimi" => "kimi",
             "cursor" => "cursor",
             "grok" => "grok",
+            "opencode" => "opencode",
             _ => "codex",
         };
         Self { name, models }
@@ -228,6 +234,7 @@ impl Provider for PlaceholderProvider {
             "kimi" => &KIMI_CLI,
             "cursor" => &CURSOR_CLI,
             "grok" => &GROK_CLI,
+            "opencode" => &OPENCODE_CLI,
             _ => &CODEX_CLI,
         }
     }
@@ -287,6 +294,9 @@ const CODEX_CLI: PlaceholderCli = PlaceholderCli { provider: "codex" };
 const KIMI_CLI: PlaceholderCli = PlaceholderCli { provider: "kimi" };
 const CURSOR_CLI: PlaceholderCli = PlaceholderCli { provider: "cursor" };
 const GROK_CLI: PlaceholderCli = PlaceholderCli { provider: "grok" };
+const OPENCODE_CLI: PlaceholderCli = PlaceholderCli {
+    provider: "opencode",
+};
 
 fn expand_codex_models() -> Vec<String> {
     let mut set = HashSet::new();
@@ -372,6 +382,32 @@ mod tests {
                 .unwrap()
                 .name(),
             "cursor"
+        );
+    }
+
+    #[test]
+    fn opencode_models_route_without_stealing_existing_kimi_alias() {
+        let registry = Registry::new(AliasProvider::Codex);
+        assert_eq!(
+            registry
+                .provider_for_model("kimi-k2.7-code", None)
+                .unwrap()
+                .name(),
+            "opencode"
+        );
+        assert_eq!(
+            registry
+                .provider_for_model("opencode-go/kimi-k2.6", None)
+                .unwrap()
+                .name(),
+            "opencode"
+        );
+        assert_eq!(
+            registry
+                .provider_for_model("kimi-k2.6", None)
+                .unwrap()
+                .name(),
+            "kimi"
         );
     }
 }

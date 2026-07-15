@@ -1,6 +1,7 @@
 # claude-code-proxy
 
-Claude Code, powered by **OpenAI**, **Kimi**, **Grok**, or **Cursor**.
+Claude Code, powered by **OpenAI**, **Kimi**, **Grok**, **OpenCode Go**, or
+**Cursor**.
 
 <img src="meta/claude-code-screenshot-2026-07.webp" alt="Claude Code running through claude-code-proxy" />
 
@@ -43,8 +44,8 @@ artifacts are published as `claude-code-proxy-windows-amd64.zip` and
 
 ### 2. Pick a provider and authenticate
 
-The proxy supports four upstream providers. Pick one and run its login flow; the
-proxy will refuse to start traffic until a token is stored.
+The proxy supports five upstream providers. OAuth providers use the login
+commands below; OpenCode Go uses a static workspace API key.
 
 **Codex (ChatGPT Plus/Pro):**
 
@@ -77,6 +78,17 @@ Sign in with your **grok.com account**. The proxy stores and refreshes its own
 OAuth session and does not use the official Grok CLI credential file. On a
 headless host, `grok auth device` prints a verification URL and code to enter on
 any other device, then polls until authorization completes.
+
+**OpenCode Go:**
+
+```sh
+export OPENCODE_API_KEY=sk-...
+```
+
+Copy the workspace key from the OpenCode console after subscribing to Go. The
+proxy does not implement an OpenCode login flow; `CCP_OPENCODE_API_KEY` is an
+equivalent, proxy-specific variable, and `opencode.apiKey` can be used in
+`config.json` instead.
 
 **Cursor Agent:**
 
@@ -362,6 +374,29 @@ refreshes them five minutes before expiry, and does not use `~/.grok/auth.json`.
 | `grok auth status` | Show token expiry and storage path    |
 | `grok auth logout` | Delete proxy-owned credentials        |
 
+### OpenCode Go
+
+Upstream: `https://opencode.ai/zen/go/v1`. OpenCode Go uses one API key but
+splits its catalog across two wire protocols. The proxy routes each model to
+its verified endpoint automatically:
+
+- OpenAI-compatible `/chat/completions`: `glm-5.2`, `glm-5.1`, `glm-5`,
+  `kimi-k2.7-code`, `kimi-k2.6`, `kimi-k2.5`, `deepseek-v4-pro`,
+  `deepseek-v4-flash`, `mimo-v2.5`, `mimo-v2.5-pro`, and `qwen3.5-plus`
+- Anthropic-compatible `/messages`: `minimax-m3`, `minimax-m2.7`,
+  `minimax-m2.5`, `qwen3.7-max`, `qwen3.7-plus`, `qwen3.6-plus`
+
+Both bare model ids and the official `opencode-go/<model-id>` form are
+accepted. The existing Kimi Code provider already owns the bare `kimi-k2.6`
+alias, so use `opencode-go/kimi-k2.6` to select the Go version explicitly.
+`count_tokens` remains local and does not consume Go usage.
+
+Authentication is API-key only. Set `CCP_OPENCODE_API_KEY` or
+`OPENCODE_API_KEY`, or configure `opencode.apiKey`. The proxy sends it as a
+Bearer token to `/chat/completions` and as `x-api-key` to the
+Anthropic-compatible `/messages` endpoint. There is no CCP browser/device login
+for this provider.
+
 ### Cursor Agent
 
 Upstream: `https://api2.cursor.sh/agent.v1.AgentService/Run` (Cursor Agent's
@@ -428,9 +463,9 @@ sequenceDiagram
     participant CC as Claude Code
     participant P as claude-code-proxy
     participant AUTH as OAuth host / credential store
-    participant U as Upstream API<br/>(Codex, Kimi, or Cursor)
+    participant U as Upstream API<br/>(Codex, Kimi, Grok, OpenCode, or Cursor)
 
-    Note over P,AUTH: One-time: PKCE / device OAuth<br/>tokens cached locally for reuse
+    Note over P,AUTH: One-time: OAuth login or API-key setup<br/>credentials cached or supplied locally
 
     CC->>P: POST /v1/messages (Anthropic shape, stream: true)
 
@@ -699,6 +734,10 @@ Windows, and at
     "baseUrl": "https://cli-chat-proxy.grok.com/v1",
     "clientVersion": "0.2.93"
   },
+  "opencode": {
+    "apiKey": "sk-...",
+    "baseUrl": "https://opencode.ai/zen/go/v1"
+  },
   "cursor": {
     "baseUrl": "https://api2.cursor.sh",
     "clientVersion": "cli-2026.06.04-5fd875e",
@@ -735,6 +774,9 @@ Windows, and at
 | `CCP_KIMI_USER_AGENT`            | `kimi.userAgent`           | `KimiCLI/1.37.0`                                  | Override the `User-Agent` header sent to Kimi                                                                                                                                     |
 | `CCP_GROK_BASE_URL`              | `grok.baseUrl`             | `https://cli-chat-proxy.grok.com/v1`              | Override the Grok Responses API base URL                                                                                                                                          |
 | `CCP_GROK_CLIENT_VERSION`        | `grok.clientVersion`       | `0.2.93`                                          | Override the Grok client version header                                                                                                                                           |
+| `CCP_OPENCODE_API_KEY`           | `opencode.apiKey`          | unset                                             | OpenCode Go workspace API key; takes precedence over `OPENCODE_API_KEY` and config                                                                                                |
+| `OPENCODE_API_KEY`               | `opencode.apiKey`          | unset                                             | Standard OpenCode Go API key variable; used when `CCP_OPENCODE_API_KEY` is unset                                                                                                  |
+| `CCP_OPENCODE_BASE_URL`          | `opencode.baseUrl`         | `https://opencode.ai/zen/go/v1`                   | Override the OpenCode Go API base URL                                                                                                                                             |
 | `CCP_CURSOR_BASE_URL`            | `cursor.baseUrl`           | `https://api2.cursor.sh`                          | Override Cursor's API base URL                                                                                                                                                    |
 | `CCP_CURSOR_CLIENT_VERSION`      | `cursor.clientVersion`     | `cli-2026.06.04-5fd875e`                          | Override Cursor client version headers                                                                                                                                            |
 | `CCP_CURSOR_AGENT_BUNDLE`        | `cursor.agentBundle`       | auto-detected                                     | Path to Cursor Agent's bundled `index.js` used only for protobuf schemas                                                                                                          |
